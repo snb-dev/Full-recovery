@@ -55,6 +55,8 @@ jobs:
             - **macOS:** the `.dmg` file
             - **Linux:** the `.AppImage` (any distribution) or `.deb` (Ubuntu, Debian)
 
+            - **Android:** `full-recovery-android.apk`
+
             The `fullrecovery-cli-*` archives contain the command-line tool.
           releaseDraft: true
           args: ${{ matrix.args }}
@@ -91,3 +93,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" "${{ matrix.archive }}" --clobber
+
+  android:
+    name: Android app
+    needs: desktop
+    uses: ./.github/workflows/android.yml
+    with:
+      release-tag: ${{ github.ref_name }}
+    secrets: inherit

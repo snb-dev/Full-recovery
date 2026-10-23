@@ -61,6 +61,25 @@ mdel -i "$card" ::/DCIM/Camera/IMG_20240312_1022.jpg ::/DCIM/Camera/IMG_20240314
     ::/Documents/thesis-notes.txt ::/Videos/birthday_party.mp4
 loop=$(losetup -f --show "$card")
 
+# A phone's storage, as the Android app sees it: photos in the trash,
+# thumbnails of deleted photos, a thumbnail database and a hidden folder.
+phone=$work/phone
+mkdir -p "$phone/DCIM/Camera" "$phone/DCIM/.thumbnails" "$phone/Pictures/.private" \
+    "$phone/Android/media/com.whatsapp/WhatsApp/Media/.Statuses"
+cp "$tree/DCIM/Camera/IMG_20240311_1021.jpg" "$phone/DCIM/Camera/"
+cp "$tree/DCIM/Camera/IMG_20240312_1022.jpg" "$phone/DCIM/Camera/.trashed-1735689600-IMG_20240312_1022.jpg"
+cp "$tree/DCIM/Camera/IMG_20240313_1023.jpg" "$phone/DCIM/Camera/.trashed-1735689600-IMG_20240313_1023.jpg"
+for n in 4 5 6; do
+    convert "$tree/DCIM/Camera/IMG_2024031${n}_102${n}.jpg" -resize 256x192 "$work/thumb$n.jpg"
+    cp "$work/thumb$n.jpg" "$phone/DCIM/.thumbnails/17000000$n.jpg"
+done
+# Thumbnail databases store pictures one after another.
+{ head -c 1000 /dev/zero; cat "$work/thumb4.jpg"; head -c 77 /dev/zero; cat "$work/thumb5.jpg"; } \
+    > "$phone/DCIM/.thumbnails/.thumbdata4--1967290299"
+cp "$tree/DCIM/Camera/IMG_20240317_1027.jpg" "$phone/Pictures/.private/private.jpg"
+cp "$tree/DCIM/Camera/IMG_20240318_1028.jpg" "$phone/Android/media/com.whatsapp/WhatsApp/Media/.Statuses/status.jpg"
+touch -d "2024-03-15 10:30" "$phone"/DCIM/Camera/* "$phone"/Pictures/.private/*
+
 Xvfb :97 -screen 0 1400x900x24 >/dev/null 2>&1 &
 xvfb=$!
 tauri-driver >/dev/null 2>&1 &
@@ -69,4 +88,4 @@ sleep 2
 
 shots=${E2E_SHOTS:-$root/target/e2e}
 rm -rf "$shots"
-python3 "$here/e2e.py" "$app" "$shots" "$(basename "$loop")" "$tree"
+python3 "$here/e2e.py" "$app" "$shots" "$(basename "$loop")" "$tree" "$phone"

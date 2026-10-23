@@ -13,6 +13,9 @@ pub enum DeviceKind {
     Disk,
     /// One drive letter (Windows).
     Volume,
+    /// Storage that can only be read file by file (phone storage, SD cards
+    /// on Android without root): scanned with [`crate::folder`].
+    Folder,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -309,7 +312,61 @@ mod imp {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+#[cfg(target_os = "android")]
+mod imp {
+    use std::fs;
+    use std::io;
+    use std::path::Path;
+
+    use super::{Device, DeviceKind};
+
+    /// Phone storage and SD cards, as Android mounts them under `/storage`.
+    /// Apps can't read the raw cards without root, only their files.
+    pub fn list() -> Vec<Device> {
+        let mut out = Vec::new();
+        if Path::new("/storage/emulated/0").is_dir() {
+            out.push(Device {
+                path: "/storage/emulated/0".into(),
+                name: "Phone storage".into(),
+                size: 0,
+                removable: false,
+                kind: DeviceKind::Folder,
+            });
+        }
+        if let Ok(dir) = fs::read_dir("/storage") {
+            let mut cards: Vec<Device> = dir
+                .flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    if matches!(name.as_str(), "emulated" | "self") || !e.path().is_dir() {
+                        return None;
+                    }
+                    Some(Device {
+                        path: format!("/storage/{name}"),
+                        name: format!("SD card or USB drive ({name})"),
+                        size: 0,
+                        removable: true,
+                        kind: DeviceKind::Folder,
+                    })
+                })
+                .collect();
+            cards.sort_by(|a, b| a.path.cmp(&b.path));
+            out.extend(cards);
+        }
+        out
+    }
+
+    pub fn same_disk(_source: &Path, _out: &Path) -> io::Result<bool> {
+        Ok(false)
+    }
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "android",
+    windows
+)))]
 mod imp {
     use std::io;
     use std::path::Path;

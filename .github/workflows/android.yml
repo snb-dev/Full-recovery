@@ -1,0 +1,73 @@
+# Builds the Android app (APK). The SDK is preinstalled on GitHub's runners.
+#
+# Without the ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD secrets
+# (a keystore with the key alias "fullrecovery"), each build is signed with a
+# new temporary key: it installs fine, but can't update an earlier install.
+name: Android
+
+on:
+  push:
+    # Tags are built by the release workflow.
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+    inputs:
+      release-tag:
+        description: Release to attach the APK to
+        type: string
+        required: true
+
+jobs:
+  apk:
+    name: APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Tauri CLI
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Signing key
+        working-directory: apps/desktop/src-tauri/gen/android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          store="$RUNNER_TEMP/release.jks"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$store"
+            password="$KEYSTORE_PASSWORD"
+          else
+            password="temporary-$GITHUB_RUN_ID"
+            keytool -genkeypair -keystore "$store" -storepass "$password" -keypass "$password" \
+              -alias fullrecovery -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Full Recovery test build"
+          fi
+          printf 'keyAlias=fullrecovery\npassword=%s\nstoreFile=%s\n' "$password" "$store" > keystore.properties
+      - name: Build
+        working-directory: apps/desktop
+        env:
+          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: npx tauri android build --apk --target aarch64 --target armv7
+      - name: Collect
+        run: |
+          apk=$(find apps/desktop/src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | head -1)
+          cp "$apk" full-recovery-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: full-recovery-android
+          path: full-recovery-android.apk
+      - name: Attach to the release
+        if: inputs.release-tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ inputs.release-tag }}" full-recovery-android.apk --clobber

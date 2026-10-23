@@ -21,11 +21,19 @@
     <!-- 1. Choose a drive -->
     <section id="view-home" class="view">
       <div class="narrow">
+        <div id="android-access" class="notice hidden">
+          <div>
+            <strong>Allow access to your files</strong>
+            <p>To look for lost photos and videos, Full Recovery needs permission to read all files on this phone. Nothing is uploaded or changed.</p>
+          </div>
+          <button id="btn-allow" class="btn primary">Allow access</button>
+        </div>
         <h1>Where did you lose your files?</h1>
         <p class="lead">Choose a drive, memory card or USB stick. Full Recovery only reads it &mdash; nothing is ever written to it.</p>
         <div id="drives" class="drive-grid"></div>
         <div class="row gap">
-          <button id="btn-open-image" class="btn">Open a disk image file&hellip;</button>
+          <button id="btn-open-image" class="btn desktop-only">Open a disk image file&hellip;</button>
+          <button id="btn-open-folder" class="btn desktop-only">Scan a folder&hellip;</button>
           <button id="btn-refresh" class="btn ghost">Refresh list</button>
         </div>
         <div class="tip">
@@ -40,11 +48,12 @@
         <h1 id="source-title"></h1>
         <p class="lead" id="source-sub"></p>
         <div id="partitions" class="partitions"></div>
+        <div id="folder-note" class="tip hidden"></div>
         <div class="action-grid">
           <button id="btn-quick" class="action">
             <span class="action-icon quick"></span>
-            <span class="action-title">Quick scan</span>
-            <span class="action-text">Finds deleted files with their original names, folders and dates. Usually takes seconds.</span>
+            <span class="action-title" id="quick-title">Quick scan</span>
+            <span class="action-text" id="quick-text">Finds deleted files with their original names, folders and dates. Usually takes seconds.</span>
           </button>
           <button id="btn-deep" class="action">
             <span class="action-icon deep"></span>
@@ -52,8 +61,10 @@
             <span class="action-text">Finds photos, videos and documents by their content &mdash; even after formatting. Takes longer.</span>
           </button>
         </div>
-        <label class="check"><input type="checkbox" id="chk-lost"> Also search for lost or deleted partitions (reads the whole drive)</label>
-        <p class="small">Drive making noises or very slow? <button id="btn-image" class="link">Copy it to a disk image first</button> and recover from the copy.</p>
+        <div id="drive-options">
+          <label class="check"><input type="checkbox" id="chk-lost"> Also search for lost or deleted partitions (reads the whole drive)</label>
+          <p class="small">Drive making noises or very slow? <button id="btn-image" class="link">Copy it to a disk image first</button> and recover from the copy.</p>
+        </div>
       </div>
     </section>
 
@@ -74,7 +85,7 @@
         <div class="center">
           <div class="toolbar">
             <input id="search" type="search" placeholder="Search by name&hellip;" autocomplete="off">
-            <label class="check inline"><input type="checkbox" id="chk-deleted" checked> Deleted files only</label>
+            <label class="check inline" id="deleted-filter"><input type="checkbox" id="chk-deleted" checked> Deleted files only</label>
             <select id="sel-chance" title="Recovery chance">
               <option value="low">Any chance</option>
               <option value="medium">Good or better</option>
@@ -100,7 +111,10 @@
           <div id="empty" class="empty hidden"></div>
         </div>
         <aside id="preview" class="preview">
-          <div class="preview-empty">Select a file to preview it.</div>
+          <button id="btn-close-preview" class="close-preview" title="Close">&times;</button>
+          <div id="preview-body">
+            <div class="preview-empty">Select a file to preview it.</div>
+          </div>
         </aside>
       </div>
       <footer class="actionbar">

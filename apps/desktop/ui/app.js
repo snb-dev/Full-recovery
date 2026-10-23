@@ -32,10 +32,20 @@ const MEDIA_TYPES = {
   opus: "audio/ogg", m4a: "audio/mp4", flac: "audio/flac",
 };
 const MAX_PREVIEW = 64 * 1024 * 1024;
-const ROW_HEIGHT = 36;
+const narrow = window.matchMedia("(max-width: 760px)");
+// Rows are taller on phones, for fingers.
+const rowHeight = () => (narrow.matches ? 56 : 36);
 const TILE = 168;
 
+const FOUND_AS = {
+  trashed: ["in trash", "Deleted, still in the trash (phones keep deleted files for 30 days)"],
+  thumbnail: ["thumbnail", "A thumbnail: a small copy kept after the photo or video"],
+  hidden: ["hidden", "In a hidden folder that galleries don't show"],
+  embedded: ["in cache", "Found inside another file, such as a thumbnail cache"],
+};
+
 const state = {
+  platform: "",
   source: null,
   items: [],
   shown: [],
@@ -90,6 +100,7 @@ function previewUrl(id) {
 
 function show(view) {
   for (const v of ["home", "source", "results"]) $(`view-${v}`).classList.toggle("hidden", v !== view);
+  document.body.classList.remove("previewing");
   renderCrumbs(view);
 }
 
@@ -130,6 +141,7 @@ function error(message) {
 const ICONS = {
   disk: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h.01M11 15h6"/></svg>',
   usb: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="7" y="9" width="10" height="13" rx="2"/><path d="M9 9V3h6v6M10 6h.01M14 6h.01"/></svg>',
+  phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>',
   file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
 };
 
@@ -156,10 +168,13 @@ async function loadDrives() {
     return;
   }
   for (const d of drives) {
-    const meta = [d.size ? formatSize(d.size) : "size unknown", d.removable ? "removable" : null, d.path]
-      .filter(Boolean).join(" · ");
-    box.append(el("button", { class: "drive", onclick: () => openSource(d.path, d.name) },
-      el("div", { class: "icon" }, svgIcon(d.removable ? "usb" : "disk")),
+    const folder = d.kind === "folder";
+    const size = d.size ? formatSize(d.size) : folder ? null : "size unknown";
+    const meta = [size, d.removable ? "removable" : null, d.path].filter(Boolean).join(" · ");
+    const open = () => (folder ? openFolderSource(d.path, d.name) : openSource(d.path, d.name));
+    const icon = folder && !d.removable ? "phone" : d.removable ? "usb" : "disk";
+    box.append(el("button", { class: "drive", onclick: open },
+      el("div", { class: "icon" }, svgIcon(icon)),
       el("div", {}, el("div", { class: "name", text: d.name }), el("div", { class: "meta", text: meta }))));
   }
 }
@@ -169,7 +184,40 @@ async function openImageFile() {
   if (path) openSource(path, path.split(/[\\/]/).pop());
 }
 
+async function openFolderDialog() {
+  const path = await dialog.open({ title: "Choose a folder to search for lost photos and videos", directory: true, multiple: false });
+  if (path) openFolderSource(path, path.split(/[\\/]/).filter(Boolean).pop() || path);
+}
+
 // ---------- 2. source ----------
+
+function setSourceMode(folder) {
+  for (const id of ["btn-deep", "drive-options"]) $(id).classList.toggle("hidden", folder);
+  $("partitions").classList.toggle("hidden", folder);
+  $("quick-title").textContent = folder ? "Find lost photos & videos" : "Quick scan";
+  $("quick-text").textContent = folder
+    ? "Looks in the trash, thumbnails, hidden folders and caches for photos and videos you lost."
+    : "Finds deleted files with their original names, folders and dates. Usually takes seconds.";
+}
+
+async function openFolderSource(path, title) {
+  try {
+    const info = await invoke("open_folder_source", { path });
+    state.source = { ...info, title };
+  } catch (e) {
+    error(e);
+    return;
+  }
+  setSourceMode(true);
+  $("source-title").textContent = title;
+  $("source-sub").textContent = path;
+  const note = $("folder-note");
+  const card = state.platform === "android" && path !== "/storage/emulated/0";
+  note.classList.toggle("hidden", !card);
+  note.textContent = "Android only lets apps read the files on a memory card, not the card itself. "
+    + "To find deleted files on this card, put it in a card reader and use Full Recovery on a computer.";
+  show("source");
+}
 
 async function openSource(path, title) {
   try {
@@ -179,6 +227,8 @@ async function openSource(path, title) {
     error(e);
     return;
   }
+  setSourceMode(false);
+  $("folder-note").classList.add("hidden");
   $("source-title").textContent = title;
   $("source-sub").textContent = `${formatSize(state.source.size)} · ${path}`;
   const parts = $("partitions");
@@ -202,7 +252,7 @@ function resetResults() {
   state.current = null;
   state.folder = null;
   state.category = "all";
-  $("preview").replaceChildren(el("div", { class: "preview-empty", text: "Select a file to preview it." }));
+  $("preview-body").replaceChildren(el("div", { class: "preview-empty", text: "Select a file to preview it." }));
 }
 
 async function startScan(kind) {
@@ -298,7 +348,10 @@ function refresh() {
   } else {
     empty.classList.add("hidden");
   }
-  $("btn-deep-again").classList.toggle("hidden", state.scanKind === "deep");
+  const folder = Boolean(state.source?.folder);
+  $("btn-deep-again").classList.toggle("hidden", state.scanKind === "deep" || folder);
+  // Folder finds are lost files of every kind, not just deleted ones.
+  $("deleted-filter").classList.toggle("hidden", folder);
 }
 
 function sortShown() {
@@ -378,11 +431,11 @@ function renderList() {
   $("list-head").classList.toggle("hidden", grid);
   const width = list.clientWidth || 600;
   const cols = grid ? Math.max(1, Math.floor((width - 12) / TILE)) : 1;
-  const rowHeight = grid ? TILE : ROW_HEIGHT;
+  const height = grid ? TILE : rowHeight();
   const rows = Math.ceil(state.shown.length / cols);
-  spacer.style.height = `${rows * rowHeight + (grid ? 12 : 0)}px`;
-  const first = Math.max(0, Math.floor(list.scrollTop / rowHeight) - 3);
-  const last = Math.min(rows, Math.ceil((list.scrollTop + list.clientHeight) / rowHeight) + 3);
+  spacer.style.height = `${rows * height + (grid ? 12 : 0)}px`;
+  const first = Math.max(0, Math.floor(list.scrollTop / height) - 3);
+  const last = Math.min(rows, Math.ceil((list.scrollTop + list.clientHeight) / height) + 3);
   for (const old of list.querySelectorAll(".row-item, .tile")) old.remove();
   const frag = document.createDocumentFragment();
   for (let r = first; r < last; r++) {
@@ -411,17 +464,25 @@ function row(item, r) {
   const [label, why] = CHANCE[item.confidence];
   const e = el("div", {
     class: `row-item${state.current === item.id ? " current" : ""}`,
-    style: `top:${r * ROW_HEIGHT}px`,
+    style: `top:${r * rowHeight()}px`,
     onclick: () => setCurrent(item),
     ondblclick: () => toggleSelect(item),
   },
   el("div", { class: "check-cell" }, checkbox(item)),
-  el("div", { class: "name", title: item.name }, item.deleted ? el("span", { class: "del", text: "deleted" }) : null, el("span", { text: item.name })),
+  el("div", { class: "name", title: item.name }, tag(item), el("span", { text: item.name })),
   el("div", { class: "folder", text: item.folder, title: item.folder }),
   el("div", { class: "size", text: formatSize(item.size) }),
   el("div", { class: "date", text: formatDate(item.modified) }),
   el("div", {}, el("span", { class: `chance ${item.confidence}`, text: label, title: why })));
   return e;
+}
+
+function tag(item) {
+  if (item.found_as) {
+    const [label, why] = FOUND_AS[item.found_as];
+    return el("span", { class: `del ${item.found_as}`, text: label, title: why });
+  }
+  return item.deleted ? el("span", { class: "del", text: "deleted" }) : null;
 }
 
 function tile(item, r, c) {
@@ -463,10 +524,23 @@ function renderSelection() {
 
 // ---------- preview ----------
 
+function status(item) {
+  if (item.found_as === "trashed") return "Deleted, still in the trash";
+  if (item.found_as) return "A copy kept by the system; the original may be deleted";
+  if (item.method === "deep") return "Unknown (found by its content)";
+  return item.deleted ? "Deleted" : "Not deleted";
+}
+
+function foundBy(item) {
+  if (item.found_as) return FOUND_AS[item.found_as][1];
+  return item.method === "files" ? "Quick scan (original name)" : "Deep scan (content)";
+}
+
 async function setCurrent(item) {
   state.current = item.id;
   renderList();
-  const pane = $("preview");
+  document.body.classList.add("previewing");
+  const pane = $("preview-body");
   const [label, why] = CHANCE[item.confidence];
   const media = el("div", { class: "media" });
   const facts = el("dl", {},
@@ -475,8 +549,8 @@ async function setCurrent(item) {
     item.modified != null ? el("dt", { text: "Modified" }) : null,
     item.modified != null ? el("dd", { text: formatDate(item.modified) }) : null,
     el("dt", { text: "Status" }),
-    el("dd", { text: item.method === "deep" ? "Unknown (found by its content)" : item.deleted ? "Deleted" : "Not deleted" }),
-    el("dt", { text: "Found by" }), el("dd", { text: item.method === "files" ? "Quick scan (original name)" : "Deep scan (content)" }),
+    el("dd", { text: status(item) }),
+    el("dt", { text: "Found by" }), el("dd", { text: foundBy(item) }),
     el("dt", { text: "Chance" }), el("dd", {}, el("span", { class: `chance ${item.confidence}`, text: label })));
   pane.replaceChildren(...[media, el("h3", { text: item.name }), facts,
     el("p", { class: "explain", text: item.problem ? `Can't be recovered yet: ${item.problem}.` : why }),
@@ -535,13 +609,21 @@ async function textPreview(item, media) {
 
 // ---------- recovering ----------
 
-async function recoverItems(ids) {
-  if (!ids.length) return;
-  const out = await dialog.open({
+async function chooseOutput() {
+  if (state.platform === "android") {
+    // No folder picker that gives a real path: save to Download.
+    return invoke("default_output_dir");
+  }
+  return dialog.open({
     title: "Choose where to save the recovered files (use a different drive)",
     directory: true,
     multiple: false,
   });
+}
+
+async function recoverItems(ids) {
+  if (!ids.length) return;
+  const out = await chooseOutput();
   if (!out) return;
   try {
     await invoke("recover", { ids, out });
@@ -571,7 +653,9 @@ listen("recover-done", ({ payload: p }) => {
   modal({
     title: p.failed ? "Recovery finished with problems" : "Your files are back",
     body,
-    actions: [["Close", closeModal], ["Open folder", () => { invoke("open_folder", { path: p.folder }); closeModal(); }, "primary"]],
+    actions: state.platform === "android"
+      ? [["OK", closeModal, "primary"]]
+      : [["Close", closeModal], ["Open folder", () => { invoke("open_folder", { path: p.folder }); closeModal(); }, "primary"]],
   });
 });
 
@@ -615,6 +699,8 @@ listen("image-done", ({ payload: p }) => {
 
 $("btn-refresh").addEventListener("click", loadDrives);
 $("btn-open-image").addEventListener("click", openImageFile);
+$("btn-open-folder").addEventListener("click", openFolderDialog);
+$("btn-close-preview").addEventListener("click", () => document.body.classList.remove("previewing"));
 $("btn-quick").addEventListener("click", () => startScan("quick"));
 $("btn-deep").addEventListener("click", () => startScan("deep"));
 $("btn-deep-again").addEventListener("click", () => startScan("deep"));
@@ -667,12 +753,36 @@ $("list").addEventListener("keydown", (e) => {
   const item = state.shown[Math.max(0, Math.min(state.shown.length - 1, next))];
   if (!item) return;
   const list = $("list");
-  const rowHeight = state.view === "grid" ? TILE : ROW_HEIGHT;
-  const top = Math.floor(state.shown.indexOf(item) / step) * rowHeight;
+  const height = state.view === "grid" ? TILE : rowHeight();
+  const top = Math.floor(state.shown.indexOf(item) / step) * height;
   if (top < list.scrollTop) list.scrollTop = top;
-  else if (top + rowHeight > list.scrollTop + list.clientHeight) list.scrollTop = top + rowHeight - list.clientHeight;
+  else if (top + height > list.scrollTop + list.clientHeight) list.scrollTop = top + height - list.clientHeight;
   setCurrent(item);
 });
 
-show("home");
-loadDrives();
+// Android: the app needs "all files access" to look through the phone.
+// MainActivity.kt provides window.FullRecoveryAndroid.
+function checkAndroidAccess() {
+  const android = window.FullRecoveryAndroid;
+  if (!android) return;
+  const allowed = android.hasAllFilesAccess();
+  $("android-access").classList.toggle("hidden", allowed);
+  if (allowed) loadDrives();
+}
+
+$("btn-allow").addEventListener("click", () => window.FullRecoveryAndroid?.requestAllFilesAccess());
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkAndroidAccess(); });
+
+async function start() {
+  try {
+    state.platform = await invoke("platform");
+  } catch (e) {
+    console.error(e);
+  }
+  document.body.classList.add(`platform-${state.platform}`);
+  show("home");
+  loadDrives();
+  checkAndroidAccess();
+}
+
+start();

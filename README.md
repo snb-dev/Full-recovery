@@ -6,8 +6,8 @@ USB drives, SD cards and memory cards, even after formatting.
 
 No payments, no "preview only" limits, no accounts.
 
-> **Status:** early development. The desktop app (Windows, macOS, Linux) and a
-> command-line tool work today. The Android app is next (see [Roadmap](#roadmap)).
+> **Status:** early development. The desktop app (Windows, macOS, Linux), the
+> Android app and a command-line tool work today (see [Roadmap](#roadmap)).
 
 ![Full Recovery: deleted files found on an SD card, with a photo preview](docs/screenshots/results.png)
 
@@ -25,6 +25,9 @@ No payments, no "preview only" limits, no accounts.
 | Thumbnails of deleted photos | Video preview |
 |---|---|
 | ![Thumbnails](docs/screenshots/thumbnails.png) | ![Video preview](docs/screenshots/video-preview.png) |
+
+**Scan a folder…** looks through the files of any folder (for example a copy
+of a phone's storage) for lost photos and videos, like the Android app does.
 
 Reading drives needs administrator rights: Windows asks for them when the app
 starts. On macOS and Linux, start it from a terminal with `sudo` (Linux:
@@ -66,6 +69,32 @@ starts. On macOS and Linux, start it from a terminal with `sudo` (Linux:
 
 Undelete works for every file type. Run `fullrecovery types` for the deep scan list.
 
+## Android app
+
+| Lost photos found on a phone | As thumbnails |
+|---|---|
+| ![Phone results](docs/screenshots/phone-results.png) | ![Phone thumbnails](docs/screenshots/phone-thumbnails.png) |
+
+Android doesn't let apps read the phone's storage directly (only with root),
+so the app looks through the phone's **files** for photos and videos that
+are lost but still there:
+
+- **Trash:** since Android 11, deleted photos and videos stay in a hidden
+  trash for 30 days. The app finds them and restores their original names.
+- **Thumbnails:** small copies of photos and videos often outlive the
+  originals.
+- **Thumbnail databases and app caches:** pictures stored inside other
+  files are found with the deep scan engine.
+- **Hidden folders:** media that gallery apps don't show (for example
+  WhatsApp statuses).
+
+Recovered files are saved in `Download/Full Recovery`. The app asks once for
+access to all files; nothing is uploaded or changed.
+
+**Deleted files on a memory card** can't be found this way: Android only
+gives apps the card's files, not the card itself. Put the card in a card
+reader and use Full Recovery on a computer instead.
+
 ## Install
 
 Download the installer for your computer from the
@@ -75,6 +104,8 @@ Download the installer for your computer from the
 - **macOS:** `.dmg` (the app is not signed yet: right-click it and choose
   *Open* the first time)
 - **Linux:** `.AppImage` (any distribution) or `.deb` (Ubuntu, Debian)
+- **Android:** `full-recovery-android.apk` (allow installing apps from your
+  browser or file manager when Android asks)
 
 ### Build from source
 
@@ -181,11 +212,13 @@ the truth instead of selling false hope:
 3. **Desktop app** ✅ (Windows, macOS, Linux): drive list, quick and deep scan,
    thumbnails and previews of photos, videos, music and text, filters, search,
    folder tree, recovery chance per file, installers
-4. **Android app:** SD card and storage scan, thumbnail and cache recovery,
-   deeper scan on rooted phones
-5. **More file systems:** ext4 (Linux, Android), APFS and HFS+ (Mac),
+4. **Android app** ✅: finds photos and videos in the trash, thumbnails,
+   thumbnail databases, caches and hidden folders; phone-sized interface
+5. **More for Android:** read SD cards and USB drives directly through a USB
+   card reader (no root needed) and on rooted phones
+6. **More file systems:** ext4 (Linux, Android), APFS and HFS+ (Mac),
    NTFS-compressed files
-6. **Modern extras:** repair broken photos and videos, duplicate detection,
+7. **Modern extras:** repair broken photos and videos, duplicate detection,
    drive health (SMART) warnings, "protection mode" that keeps deleted files
    safe for easy recovery, more formats (camera RAW, MP3, Office 97-2003, ...)
 
@@ -194,14 +227,15 @@ the truth instead of selling false hope:
 ```
 crates/core     recovery engine (library, used by every app)
 crates/cli      `fullrecovery` command-line tool
-apps/desktop    desktop app: Rust backend (src-tauri) and interface (ui)
+apps/desktop    the app: Rust backend (src-tauri), interface (ui) and the
+                Android project (src-tauri/gen/android)
 ```
 
 The engine is written in Rust, which is fast and memory-safe, and the same
 code builds for desktop and Android. The app uses [Tauri](https://tauri.app):
 a small Rust program that shows its interface in the system's own web view,
-so downloads stay small. Tauri also builds Android apps, so the Android app
-can share the same interface.
+so downloads stay small. The Android app is built from the same code and
+interface (`npx tauri android build`, needs the Android SDK and NDK).
 
 ## Contributing
 

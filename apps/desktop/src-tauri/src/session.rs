@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use fullrecovery_core::folder::{self, FindKind, FolderFind, FolderObserver};
 use fullrecovery_core::fs::{self as rfs, FileData, FsEntry};
 use fullrecovery_core::partition::{self, Partition};
 use fullrecovery_core::{
@@ -37,6 +38,9 @@ pub enum Method {
     Files,
     /// Found by the deep scan: only the content is known.
     Deep,
+    /// Found among the files of a folder (phones): trash, thumbnails,
+    /// hidden folders and media inside other files.
+    Folder,
 }
 
 /// A recoverable file, as shown in the result list.
@@ -58,12 +62,24 @@ pub struct Item {
     /// The deep scan found this file's content intact where the file system
     /// says it is.
     pub verified: bool,
+    /// For folder scans: where the file was found.
+    pub found_as: Option<FindKind>,
 }
 
 #[derive(Clone)]
 enum Origin {
-    Fs { volume: usize, entry: FsEntry },
+    Fs {
+        volume: usize,
+        entry: FsEntry,
+    },
     Carved(FoundFile),
+    /// A whole file of a scanned folder, recovered under `name`.
+    File(PathBuf),
+    /// Part of a file of a scanned folder.
+    Embedded {
+        path: PathBuf,
+        found: FoundFile,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,11 +87,15 @@ pub struct SourceInfo {
     pub path: String,
     pub size: u64,
     pub partitions: Vec<Partition>,
+    /// The source is a folder read file by file, not a drive.
+    pub folder: bool,
 }
 
 #[derive(Default)]
 pub struct Session {
     source: Option<(PathBuf, Arc<FileSource>)>,
+    /// Set instead of `source` when a folder is scanned.
+    folder: Option<PathBuf>,
     items: Vec<Item>,
     origins: Vec<Origin>,
     /// Folder names of the volumes read by the quick scan.
@@ -119,6 +139,7 @@ pub fn open(shared: &Shared, path: &str) -> Result<SourceInfo, String> {
         path: path.into(),
         size: src.len(),
         partitions,
+        folder: false,
     };
     *s = Session {
         source: Some((PathBuf::from(path), Arc::new(src))),
@@ -127,19 +148,58 @@ pub fn open(shared: &Shared, path: &str) -> Result<SourceInfo, String> {
     Ok(info)
 }
 
-/// Marks the session busy and returns what a background job needs.
-fn begin(shared: &Shared) -> Result<(Arc<FileSource>, Arc<AtomicBool>), String> {
+/// Opens a folder (phone storage, an SD card's files) for a folder scan.
+pub fn open_folder(shared: &Shared, path: &str) -> Result<SourceInfo, String> {
     let mut s = lock(shared);
     if s.busy {
         return Err("Please wait for the current task to finish.".into());
     }
-    let Some((_, src)) = &s.source else {
-        return Err("Choose a drive first.".into());
+    std::fs::read_dir(path).map_err(|e| match e.kind() {
+        io::ErrorKind::PermissionDenied => {
+            "Full Recovery is not allowed to read this storage yet. Please allow access to all \
+             files when asked."
+                .to_owned()
+        }
+        _ => describe(&e),
+    })?;
+    *s = Session {
+        folder: Some(PathBuf::from(path)),
+        ..Session::default()
     };
-    let src = Arc::clone(src);
+    Ok(SourceInfo {
+        path: path.into(),
+        size: 0,
+        partitions: Vec::new(),
+        folder: true,
+    })
+}
+
+/// Marks the session busy and returns what a background job needs: the
+/// open drive (`None` for a folder) and the cancel flag.
+fn begin_any(shared: &Shared) -> Result<(Option<Arc<FileSource>>, Arc<AtomicBool>), String> {
+    let mut s = lock(shared);
+    if s.busy {
+        return Err("Please wait for the current task to finish.".into());
+    }
+    if s.source.is_none() && s.folder.is_none() {
+        return Err("Choose a drive first.".into());
+    }
+    let src = s.source.as_ref().map(|(_, src)| Arc::clone(src));
     s.busy = true;
     s.cancel = Arc::new(AtomicBool::new(false));
     Ok((src, Arc::clone(&s.cancel)))
+}
+
+/// Like [`begin_any`], for jobs that need a drive.
+fn begin(shared: &Shared) -> Result<(Arc<FileSource>, Arc<AtomicBool>), String> {
+    {
+        let s = lock(shared);
+        if s.source.is_none() && s.folder.is_some() {
+            return Err("This works on drives only, not on folders.".into());
+        }
+    }
+    let (src, cancel) = begin_any(shared)?;
+    Ok((src.expect("checked above"), cancel))
 }
 
 fn finish(shared: &Shared) {
@@ -184,16 +244,21 @@ impl Throttle {
 /// Quick scan: reads the file systems (all partitions, plus lost ones if
 /// `search_lost`) and lists their files, including deleted ones.
 pub fn start_quick_scan(shared: &Shared, search_lost: bool, emit: Emit) -> Result<(), String> {
-    let (src, cancel) = begin(shared)?;
-    {
+    let (src, cancel) = begin_any(shared)?;
+    let folder = {
         let mut s = lock(shared);
         s.items.clear();
         s.origins.clear();
         s.volumes.clear();
-    }
+        s.folder.clone()
+    };
     let shared = Arc::clone(shared);
     thread::spawn(move || {
-        let result = quick_scan(&shared, &*src, search_lost, &cancel, &emit);
+        let result = match (&src, &folder) {
+            (Some(src), _) => quick_scan(&shared, &**src, search_lost, &cancel, &emit),
+            (None, Some(root)) => folder_scan(&shared, root, &cancel, &emit),
+            (None, None) => Ok(()),
+        };
         finish(&shared);
         let found = lock(&shared).items.len();
         emit(
@@ -295,6 +360,7 @@ fn quick_scan(
                 method: Method::Files,
                 problem,
                 verified: false,
+                found_as: None,
             };
             s.items.push(item);
             s.origins.push(Origin::Fs {
@@ -305,6 +371,75 @@ fn quick_scan(
     }
     progress("Done", 1, 1);
     Ok(())
+}
+
+fn folder_scan(shared: &Shared, root: &Path, cancel: &AtomicBool, emit: &Emit) -> io::Result<()> {
+    let mut observer = FolderItems {
+        shared,
+        cancel,
+        emit,
+        throttle: Throttle::new(),
+    };
+    folder::scan_folder(root, &mut observer)
+}
+
+struct FolderItems<'a> {
+    shared: &'a Shared,
+    cancel: &'a AtomicBool,
+    emit: &'a Emit,
+    throttle: Throttle,
+}
+
+impl FolderObserver for FolderItems<'_> {
+    fn found(&mut self, f: FolderFind) -> ControlFlow<()> {
+        let mut s = lock(self.shared);
+        let id = s.items.len() as u32;
+        let ext = extension(&f.name);
+        s.items.push(Item {
+            id,
+            name: f.name,
+            folder: f.folder,
+            ext,
+            size: f.size,
+            modified: f.modified,
+            deleted: f.kind == FindKind::Trashed,
+            category: f.category,
+            confidence: f.confidence,
+            method: Method::Folder,
+            problem: None,
+            verified: false,
+            found_as: Some(f.kind),
+        });
+        s.origins.push(match f.embedded {
+            Some(found) => Origin::Embedded {
+                path: f.path,
+                found,
+            },
+            None => Origin::File(f.path),
+        });
+        ControlFlow::Continue(())
+    }
+
+    fn progress(&mut self, folder: &Path, files_seen: u64) -> ControlFlow<()> {
+        if self.throttle.ready() {
+            let found = lock(self.shared).items.len();
+            (self.emit)(
+                "scan-progress",
+                json!({
+                    "phase": format!("Looking in {}", folder.display()),
+                    "done": 0,
+                    "total": 0,
+                    "files_seen": files_seen,
+                    "found": found,
+                }),
+            );
+        }
+        if self.cancel.load(Ordering::Relaxed) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
 }
 
 /// Deep scan: finds files by their content anywhere on the drive. Files the
@@ -411,6 +546,7 @@ impl ScanObserver for DeepObserver<'_> {
             method: Method::Deep,
             problem: None,
             verified: false,
+            found_as: None,
         });
         s.origins.push(Origin::Carved(f.clone()));
         ControlFlow::Continue(())
@@ -460,6 +596,17 @@ impl Write for Limited {
 }
 
 /// Reads up to `max` bytes of item `id`.
+/// Writes the content of a found file.
+fn write_origin(src: Option<&dyn Source>, origin: &Origin, out: &mut dyn Write) -> io::Result<()> {
+    let no_drive = || io::Error::new(io::ErrorKind::NotFound, "no drive is open");
+    match origin {
+        Origin::Fs { entry, .. } => rfs::extract(src.ok_or_else(no_drive)?, entry, out),
+        Origin::Carved(f) => recover::extract(src.ok_or_else(no_drive)?, f, out),
+        Origin::File(path) => io::copy(&mut File::open(path)?, out).map(|_| ()),
+        Origin::Embedded { path, found } => recover::extract(&FileSource::open(path)?, found, out),
+    }
+}
+
 pub fn read_item(shared: &Shared, id: u32, max: u64) -> Result<(Item, Vec<u8>), String> {
     let (item, origin, src) = {
         let s = lock(shared);
@@ -469,10 +616,11 @@ pub fn read_item(shared: &Shared, id: u32, max: u64) -> Result<(Item, Vec<u8>), 
             .cloned()
             .zip(s.origins.get(id as usize).cloned())
             .ok_or("No such file.")?;
-        let Some((_, src)) = &s.source else {
-            return Err("No drive is open.".into());
-        };
-        (item, origin, Arc::clone(src))
+        (
+            item,
+            origin,
+            s.source.as_ref().map(|(_, src)| Arc::clone(src)),
+        )
     };
     let max = max.min(item.size) as usize;
     let mut out = Limited {
@@ -480,10 +628,7 @@ pub fn read_item(shared: &Shared, id: u32, max: u64) -> Result<(Item, Vec<u8>), 
         max,
     };
     if max > 0 {
-        let result = match origin {
-            Origin::Fs { entry, .. } => rfs::extract(&*src, &entry, &mut out),
-            Origin::Carved(f) => recover::extract(&*src, &f, &mut out),
-        };
+        let result = write_origin(src.as_deref().map(|s| s as &dyn Source), &origin, &mut out);
         if let Err(e) = result {
             if out.data.len() < max {
                 return Err(describe(&e));
@@ -592,9 +737,10 @@ pub fn start_recover(
             }
         }
     }
-    let (src, cancel) = begin(shared)?;
+    let (src, cancel) = begin_any(shared)?;
     let shared = Arc::clone(shared);
     thread::spawn(move || {
+        let src = src.as_deref().map(|s| s as &dyn Source);
         let total = ids.len();
         let (mut saved, mut failed) = (0u32, 0u32);
         let mut errors = Vec::new();
@@ -616,16 +762,14 @@ pub fn start_recover(
                     .map(|(item, origin)| {
                         let volume = match &origin {
                             Origin::Fs { volume, .. } => s.volumes.get(*volume).cloned(),
-                            Origin::Carved(_) => None,
+                            _ => None,
                         };
                         (item, origin, volume)
                     })
             };
             let result = match job {
-                Some((item, origin, volume)) => {
-                    save(&*src, volume.as_deref(), &item, &origin, &out)
-                        .map_err(|e| format!("{}: {}", item.name, describe(&e)))
-                }
+                Some((item, origin, volume)) => save(src, volume.as_deref(), &item, &origin, &out)
+                    .map_err(|e| format!("{}: {}", item.name, describe(&e))),
                 None => Err(format!("file {id} not found")),
             };
             match result {
@@ -654,34 +798,44 @@ pub fn start_recover(
 }
 
 fn save(
-    src: &dyn Source,
+    src: Option<&dyn Source>,
     volume: Option<&str>,
     item: &Item,
     origin: &Origin,
     out: &Path,
 ) -> io::Result<()> {
-    match origin {
-        Origin::Fs { entry, .. } => {
-            let mut dir = out.to_path_buf();
-            if let Some(name) = volume.filter(|n| !n.is_empty()) {
-                dir.push(recover::safe_name(name));
-            }
-            recover::save_fs_entry(src, entry, &dir).map(|_| ())
+    if let (Origin::Fs { entry, .. }, Some(src)) = (origin, src) {
+        let mut dir = out.to_path_buf();
+        if let Some(name) = volume.filter(|n| !n.is_empty()) {
+            dir.push(recover::safe_name(name));
         }
-        Origin::Carved(f) => {
-            let path = recover::unique_path(
-                out.join("Deep scan")
-                    .join(recover::safe_name(&item.folder.replace("/Deep scan/", "")))
-                    .join(&item.name),
-            );
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let mut w = BufWriter::new(File::create(&path)?);
-            recover::extract(src, f, &mut w)?;
-            w.flush()
-        }
+        return recover::save_fs_entry(src, entry, &dir).map(|_| ());
     }
+    // Everything else is saved under the folder shown in the list.
+    let mut path = out.to_path_buf();
+    for part in item.folder.split('/').filter(|p| !p.is_empty()) {
+        path.push(recover::safe_name(part));
+    }
+    let path = recover::unique_path(path.join(recover::safe_name(&item.name)));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut w = BufWriter::new(File::create(&path)?);
+    write_origin(src, origin, &mut w)?;
+    let file = w.into_inner().map_err(|e| e.into_error())?;
+    if let Some(t) = item.modified.and_then(|t| u64::try_from(t).ok()) {
+        let _ = file.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(t));
+    }
+    Ok(())
+}
+
+/// Where recovered files go when there is no folder picker (Android).
+pub fn default_output_dir() -> PathBuf {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let stamp = rfs::format_time(now).replace(':', "-");
+    PathBuf::from("/storage/emulated/0/Download/Full Recovery").join(stamp)
 }
 
 /// Copies the open drive to an image file in the background.
@@ -877,6 +1031,78 @@ mod tests {
         assert_eq!(
             (new[0].name.as_str(), new[0].size),
             ("photo_000001.jpg", jpeg.len() as u64)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A tiny but complete JPEG.
+    fn jpeg() -> Vec<u8> {
+        [
+            &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10][..],
+            b"JFIF\0\x01\x01\x00\x00\x01\x00\x01\x00\x00",
+            &[0xFF, 0xC0, 0x00, 0x0B, 8, 0, 1, 0, 1, 1, 1, 0x11, 0],
+            &[
+                0xFF, 0xDA, 0x00, 0x08, 1, 1, 0, 0, 0x3F, 0, 0x12, 0x34, 0xFF, 0xD9,
+            ],
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn folder_scan_finds_trash_and_cached_photos() {
+        let dir = temp_dir("folder");
+        let phone = dir.join("phone");
+        let camera = phone.join("DCIM/Camera");
+        std::fs::create_dir_all(&camera).unwrap();
+        std::fs::write(camera.join("visible.jpg"), jpeg()).unwrap();
+        std::fs::write(camera.join(".trashed-1735689600-IMG_1.jpg"), jpeg()).unwrap();
+        let mut cache = vec![1u8; 2777];
+        cache.extend(jpeg());
+        cache.extend([2u8; 100]);
+        std::fs::create_dir_all(phone.join("DCIM/.thumbnails")).unwrap();
+        std::fs::write(phone.join("DCIM/.thumbnails/.thumbdata4-1"), &cache).unwrap();
+
+        let shared: Shared = Arc::default();
+        let info = open_folder(&shared, phone.to_str().unwrap()).unwrap();
+        assert!(info.folder);
+        assert!(start_deep_scan(&shared, Arc::new(|_, _| {})).is_err());
+        let (emit, rx) = events();
+        start_quick_scan(&shared, false, emit.clone()).unwrap();
+        wait_for(&rx, "scan-done");
+        let all = items(&shared, 0);
+        let mut names: Vec<_> = all
+            .iter()
+            .map(|i| (i.name.as_str(), i.deleted, i.found_as))
+            .collect();
+        names.sort_by_key(|n| n.0);
+        assert_eq!(
+            names,
+            [
+                ("IMG_1.jpg", true, Some(FindKind::Trashed)),
+                ("thumbdata4-1_001.jpg", false, Some(FindKind::Embedded)),
+            ]
+        );
+        for item in &all {
+            assert_eq!(read_item(&shared, item.id, MAX_PREVIEW).unwrap().1, jpeg());
+        }
+
+        let out = dir.join("out");
+        start_recover(
+            &shared,
+            all.iter().map(|i| i.id).collect(),
+            out.clone(),
+            emit,
+        )
+        .unwrap();
+        let done = wait_for(&rx, "recover-done");
+        assert_eq!(done["saved"].as_u64(), Some(2));
+        assert_eq!(
+            std::fs::read(out.join("DCIM/Camera/IMG_1.jpg")).unwrap(),
+            jpeg()
+        );
+        assert_eq!(
+            std::fs::read(out.join("DCIM/.thumbnails/.thumbdata4-1/thumbdata4-1_001.jpg")).unwrap(),
+            jpeg()
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

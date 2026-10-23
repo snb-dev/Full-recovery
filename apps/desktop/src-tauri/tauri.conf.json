@@ -14,8 +14,8 @@
         "title": "Full Recovery",
         "width": 1240,
         "height": 800,
-        "minWidth": 900,
-        "minHeight": 600
+        "minWidth": 380,
+        "minHeight": 560
       }
     ],
     "security": {
