@@ -1,0 +1,13 @@
+[package]
+name = "fullrecovery-core"
+description = "Data recovery engine: file carving, disk imaging and recovery for Full Recovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crc32fast.workspace = true
+memchr.workspace = true
+serde.workspace = true

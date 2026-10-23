@@ -1,0 +1,5 @@
+/target
+*.img
+*.dd
+*.iso
+/recovered*/
