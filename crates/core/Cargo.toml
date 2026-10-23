@@ -11,3 +11,6 @@ rust-version.workspace = true
 crc32fast.workspace = true
 memchr.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+flate2.workspace = true

@@ -3,6 +3,10 @@
 //! The engine never writes to the device it reads from. It works on any
 //! [`Source`] (a disk image, a partition or a raw device) and offers:
 //!
+//! * [`fs`]: reads FAT, exFAT and NTFS file systems, including deleted files
+//!   with their original names and folders;
+//! * [`partition`]: reads MBR/GPT partition tables and searches for lost
+//!   partitions;
 //! * [`scan`]: signature-based deep scan ("file carving") that finds files by
 //!   their content, even after formatting or when the file system is gone;
 //! * [`recover`]: copying found files out to a safe location;
@@ -10,7 +14,9 @@
 //!   unreadable sectors, so recovery can work on the copy instead.
 
 pub mod carve;
+pub mod fs;
 pub mod image;
+pub mod partition;
 pub mod reader;
 pub mod recover;
 pub mod scan;

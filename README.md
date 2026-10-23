@@ -11,19 +11,28 @@ No payments, no "preview only" limits, no accounts.
 
 ## What works now
 
+- **Undelete with original names:** recovers deleted files *with their names,
+  folders and dates* from **NTFS** (Windows), **FAT12/16/32** and **exFAT**
+  (USB drives, SD cards, cameras, phones), including files inside deleted
+  folders.
+- **Partitions:** reads MBR and GPT partition tables (using the backup GPT if
+  the main one is damaged) and **finds lost or deleted partitions**, even when
+  a partition's first sector is destroyed.
 - **Deep scan (file carving):** finds files by their content, so it works even
   when the file system is formatted, damaged or missing.
-- **Verified results:** every file is checked against its format's structure
-  (and checksums where the format has them) and gets a **recovery confidence**:
-  - `high`: the file's whole structure was verified
-  - `medium`: looks right but could not be fully verified
-  - `low`: the file is damaged or fragmented; the readable part was saved
+- **Recovery confidence** for every file:
+  - `high`: verified (structure and checksums, or the file system's own
+    records show the data is untouched)
+  - `medium`: very likely fine, but could not be fully verified
+  - `low`: damaged, or partly overwritten by newer files
 - **Drive imaging for failing drives:** copy a dying drive once, skipping bad
   sectors, then recover from the copy without stressing the drive again.
-- **Read-only:** the drive being recovered is never written to. On Linux the
-  tool refuses to save recovered files onto the same disk.
+- **Read-only and crash-safe:** the drive being recovered is never written to,
+  and damaged disks are handled without crashing (tested with thousands of
+  corrupted disks). On Linux the tool refuses to save recovered files onto the
+  disk being recovered.
 
-### Supported file types
+### File types found by deep scan
 
 | Type     | Formats                                                    |
 |----------|------------------------------------------------------------|
@@ -34,7 +43,7 @@ No payments, no "preview only" limits, no accounts.
 | Archive  | ZIP, 7Z, APK, JAR                                          |
 | Database | SQLite (contacts, messages, app data)                      |
 
-Run `fullrecovery types` for the current list.
+Undelete works for every file type. Run `fullrecovery types` for the deep scan list.
 
 ## Install
 
@@ -54,19 +63,42 @@ cargo build --release
 > always save recovered files to a **different** drive. New data overwrites
 > deleted files.
 
-```sh
-# See what can be recovered (nothing is saved)
-fullrecovery scan /dev/sdb
+**Deleted a file by mistake?** Undelete it with its original name and folder:
 
-# Recover everything to a folder on another drive
-fullrecovery recover /dev/sdb --out /media/backup/recovered
+```sh
+# See the partitions on the drive
+fullrecovery partitions /dev/sdb
+
+# List deleted files (names, sizes, dates, recovery confidence)
+fullrecovery files /dev/sdb --deleted
+
+# Recover all deleted files, keeping their folders and names
+fullrecovery undelete /dev/sdb --out /media/backup/recovered
+
+# Only files whose path contains "photos", from partition 2
+fullrecovery undelete /dev/sdb --partition 2 --path photos --out ./recovered
+```
+
+**Formatted drive, or partition gone?**
+
+```sh
+# Look for lost partitions, then undelete from them
+fullrecovery partitions /dev/sdb --search
+fullrecovery undelete /dev/sdb --search --out ./recovered
+
+# Deep scan: finds files by their content, without names
+fullrecovery recover /dev/sdb --out ./recovered
 
 # Only photos and videos, only fully verified files
 fullrecovery recover /dev/sdb --out ./recovered --types jpg,heic,mp4,mov --min-confidence high
+```
 
-# Failing drive? Copy it first, then recover from the copy
+**Failing drive** (clicking, very slow, read errors)? Copy it first, then
+recover from the copy:
+
+```sh
 fullrecovery image /dev/sdb sdb.img
-fullrecovery recover sdb.img --out ./recovered
+fullrecovery undelete sdb.img --out ./recovered
 ```
 
 Drive names:
@@ -77,8 +109,9 @@ Drive names:
 
 Disk image files (`.img`, `.dd`, `.raw`) work on every system.
 
-Found files are saved in folders by type (`photo/`, `video/`, ...), and a
-`report.json` lists every file with its location, size and confidence.
+`undelete` keeps the original folders, names and dates. `recover` (deep scan)
+saves files in folders by type (`photo/`, `video/`, ...). Both write a JSON
+report listing every file with its size and confidence.
 
 ## What no recovery tool can do
 
@@ -94,19 +127,23 @@ the truth instead of selling false hope:
   folders and backups. Apps that claim more are usually restoring backups.
 - **Overwritten data:** if new files were saved over the old ones, the old
   data is gone.
+- **First letters of short FAT names:** FAT overwrites the first letter of a
+  deleted file's short (8.3) name, so `DATA.BIN` comes back as `_ATA.BIN`.
+  Long names are kept in full.
 - **Encrypted drives** (BitLocker, FileVault, LUKS) need their key or password.
 
 ## Roadmap
 
 1. **Core engine** ✅: deep scan, 30+ formats, confidence scores, drive imaging
-2. **File systems:** recover deleted files *with their original names and
-   folders* from NTFS, FAT32, exFAT, then ext4, APFS and HFS+; find lost
-   partitions
+2. **File systems** ✅: undelete with original names and folders from NTFS,
+   FAT12/16/32 and exFAT; MBR/GPT; lost partition search
 3. **Desktop app** (Windows, macOS, Linux): drive list, scan, preview photos,
    videos and documents before recovering, filters and search
 4. **Android app:** SD card and storage scan, thumbnail and cache recovery,
    deeper scan on rooted phones
-5. **Modern extras:** repair broken photos and videos, duplicate detection,
+5. **More file systems:** ext4 (Linux, Android), APFS and HFS+ (Mac),
+   NTFS-compressed files
+6. **Modern extras:** repair broken photos and videos, duplicate detection,
    drive health (SMART) warnings, "protection mode" that keeps deleted files
    safe for easy recovery, more formats (camera RAW, MP3, Office 97-2003, ...)
 
@@ -133,6 +170,9 @@ cargo test
 
 To add a new file type, add a carver in `crates/core/src/carve/`, register it
 in `carve/mod.rs`, and add a test file to `crates/core/src/fixtures.rs`.
+
+File system tests use real disk images made by each file system's own tools
+(`crates/core/tests/images/make-images.sh`).
 
 ## License
 

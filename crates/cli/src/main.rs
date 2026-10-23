@@ -1,5 +1,6 @@
 //! `fullrecovery` command-line tool.
 
+mod files;
 mod safety;
 
 use std::collections::BTreeMap;
@@ -51,6 +52,42 @@ enum Command {
         /// Folder to save recovered files in. Must be on a different drive.
         #[arg(short, long, value_name = "DIR")]
         out: PathBuf,
+    },
+    /// Show the partitions and file systems on a drive or disk image.
+    Partitions {
+        /// Drive or disk image (read-only).
+        source: PathBuf,
+        /// Search the whole drive for lost or deleted partitions (slow).
+        #[arg(long)]
+        search: bool,
+        /// Size of the source in bytes, if it cannot be detected.
+        #[arg(long, value_parser = parse_size)]
+        size: Option<u64>,
+    },
+    /// List files, including deleted ones, with their original names and folders.
+    Files {
+        #[command(flatten)]
+        volume: files::VolumeArgs,
+        /// Only show deleted files.
+        #[arg(long)]
+        deleted: bool,
+    },
+    /// Recover deleted files with their original names, folders and dates.
+    Undelete {
+        #[command(flatten)]
+        volume: files::VolumeArgs,
+        /// Folder to save recovered files in. Must be on a different drive.
+        #[arg(short, long, value_name = "DIR")]
+        out: PathBuf,
+        /// Also copy files that are not deleted.
+        #[arg(long)]
+        all: bool,
+        /// Only recover files with at least this confidence: low, medium or high.
+        #[arg(long, default_value = "low")]
+        min_confidence: Confidence,
+        /// Only recover files whose path contains this text (not case-sensitive).
+        #[arg(long, value_name = "TEXT")]
+        path: Option<String>,
     },
     /// Copy a drive byte-by-byte to an image file, skipping unreadable sectors.
     Image {
@@ -115,6 +152,19 @@ fn main() -> Result<()> {
             fs::create_dir_all(&out).with_context(|| format!("creating {}", out.display()))?;
             run_scan(&scan, Some(&out), false, Some(&out.join("report.json")))
         }
+        Command::Partitions {
+            source,
+            search,
+            size,
+        } => files::run_partitions(&source, size, search),
+        Command::Files { volume, deleted } => files::run_files(&volume, deleted),
+        Command::Undelete {
+            volume,
+            out,
+            all,
+            min_confidence,
+            path,
+        } => files::run_undelete(&volume, &out, all, min_confidence, path.as_deref()),
         Command::Image { source, dest, size } => run_image(&source, &dest, size),
     }
 }
@@ -130,7 +180,7 @@ fn list_types() {
     }
 }
 
-fn open_source(path: &Path, size: Option<u64>) -> Result<FileSource> {
+pub(crate) fn open_source(path: &Path, size: Option<u64>) -> Result<FileSource> {
     let src = FileSource::open(path).with_context(|| {
         format!(
             "cannot open {} (raw drives usually need administrator/root rights)",
@@ -150,7 +200,7 @@ fn open_source(path: &Path, size: Option<u64>) -> Result<FileSource> {
     Ok(src)
 }
 
-fn progress_bar(total: u64) -> ProgressBar {
+pub(crate) fn progress_bar(total: u64) -> ProgressBar {
     let bar = ProgressBar::new(total);
     bar.set_style(
         ProgressStyle::with_template(
@@ -353,7 +403,7 @@ fn run_image(source: &Path, dest: &Path, size: Option<u64>) -> Result<()> {
 }
 
 /// Parses a byte count with an optional K/M/G/T suffix (powers of 1024).
-fn parse_size(s: &str) -> Result<u64, String> {
+pub(crate) fn parse_size(s: &str) -> Result<u64, String> {
     let s = s.trim();
     let (digits, shift) = match s.char_indices().last() {
         Some((i, c)) if c.is_ascii_alphabetic() => {
