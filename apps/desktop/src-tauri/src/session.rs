@@ -160,6 +160,8 @@ pub fn open_usb(_shared: &Shared, _usb: UsbDevice) -> Result<SourceInfo, String>
 
 /// A USB mass storage device opened by the Android side of the app.
 #[derive(Debug, serde::Deserialize)]
+// Only read where USB devices can be opened (Linux, Android).
+#[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
 pub struct UsbDevice {
     pub name: String,
     pub fd: i32,
