@@ -3,6 +3,7 @@
 //! The engine never writes to the device it reads from. It works on any
 //! [`Source`] (a disk image, a partition or a raw device) and offers:
 //!
+//! * [`devices`]: lists the drives of the computer;
 //! * [`fs`]: reads FAT, exFAT and NTFS file systems, including deleted files
 //!   with their original names and folders;
 //! * [`partition`]: reads MBR/GPT partition tables and searches for lost
@@ -14,6 +15,7 @@
 //!   unreadable sectors, so recovery can work on the copy instead.
 
 pub mod carve;
+pub mod devices;
 pub mod fs;
 pub mod image;
 pub mod partition;

@@ -32,6 +32,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// List the drives of this computer.
+    Drives,
     /// List the file types that can be recovered.
     Types,
     /// Deep-scan a drive or disk image and list the files that can be recovered.
@@ -142,6 +144,10 @@ impl ScanArgs {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
+        Command::Drives => {
+            list_drives();
+            Ok(())
+        }
         Command::Types => {
             list_types();
             Ok(())
@@ -166,6 +172,22 @@ fn main() -> Result<()> {
             path,
         } => files::run_undelete(&volume, &out, all, min_confidence, path.as_deref()),
         Command::Image { source, dest, size } => run_image(&source, &dest, size),
+    }
+}
+
+fn list_drives() {
+    let drives = fullrecovery_core::devices::list();
+    if drives.is_empty() {
+        println!("No drives found.");
+    }
+    for d in drives {
+        println!(
+            "{:<24} {:>10}  {:<9} {}",
+            d.path,
+            HumanBytes(d.size).to_string(),
+            if d.removable { "removable" } else { "" },
+            d.name
+        );
     }
 }
 

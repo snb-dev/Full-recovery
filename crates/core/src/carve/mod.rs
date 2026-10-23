@@ -69,16 +69,23 @@ pub enum Category {
 }
 
 impl Category {
+    /// Category of a file extension (case does not matter).
     pub fn from_extension(ext: &str) -> Self {
-        match ext {
-            "jpg" | "png" | "gif" | "bmp" | "webp" | "heic" | "avif" | "cr3" => Self::Photo,
-            "mp4" | "mov" | "3gp" | "avi" | "mkv" | "webm" | "ogv" => Self::Video,
-            "wav" | "m4a" | "ogg" | "opus" | "oga" => Self::Audio,
-            "pdf" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "odg" | "epub" => {
-                Self::Document
+        match ext.to_ascii_lowercase().as_str() {
+            "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" | "heic" | "heif" | "avif" | "tif"
+            | "tiff" | "cr2" | "cr3" | "nef" | "arw" | "dng" | "orf" | "rw2" | "raf" | "svg"
+            | "ico" | "psd" => Self::Photo,
+            "mp4" | "m4v" | "mov" | "3gp" | "avi" | "mkv" | "webm" | "ogv" | "wmv" | "flv"
+            | "mpg" | "mpeg" | "mts" | "m2ts" | "ts" | "vob" => Self::Video,
+            "wav" | "mp3" | "m4a" | "aac" | "flac" | "ogg" | "opus" | "oga" | "wma" | "amr"
+            | "aiff" | "mid" => Self::Audio,
+            "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "odt" | "ods" | "odp"
+            | "odg" | "epub" | "txt" | "rtf" | "csv" | "md" | "pages" | "numbers" | "key"
+            | "html" | "htm" | "xml" | "json" => Self::Document,
+            "zip" | "7z" | "rar" | "tar" | "gz" | "bz2" | "xz" | "jar" | "apk" | "iso" => {
+                Self::Archive
             }
-            "zip" | "7z" | "jar" | "apk" => Self::Archive,
-            "db" => Self::Database,
+            "db" | "sqlite" | "sqlite3" | "mdb" | "accdb" => Self::Database,
             _ => Self::Other,
         }
     }

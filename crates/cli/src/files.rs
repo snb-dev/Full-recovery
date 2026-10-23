@@ -5,13 +5,12 @@ use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::Args;
-use fullrecovery_core::fs::{self as rfs, FileData, FsEntry, Volume};
+use fullrecovery_core::fs::{self as rfs, FsEntry, Volume};
 use fullrecovery_core::partition::{self, Partition};
-use fullrecovery_core::{Confidence, Source};
+use fullrecovery_core::{recover, Confidence, Source};
 use indicatif::HumanBytes;
 use serde::Serialize;
 
@@ -235,7 +234,7 @@ pub fn run_undelete(
             if !wanted {
                 continue;
             }
-            match save(&src, e, &dir) {
+            match recover::save_fs_entry(&src, e, &dir) {
                 Ok(path) => {
                     saved += 1;
                     report.push(Recovered {
@@ -261,91 +260,4 @@ pub fn run_undelete(
     }
     println!("Details are in {}.", report_path.display());
     Ok(())
-}
-
-/// Saves one file under `dir`, keeping its folders, name and modification time.
-fn save(src: &dyn Source, e: &FsEntry, dir: &Path) -> Result<PathBuf> {
-    if let FileData::Unsupported(why) = e.data {
-        bail!("{why}");
-    }
-    let mut path = dir.to_path_buf();
-    for part in e.path.split('/').filter(|p| !p.is_empty()) {
-        path.push(safe_name(part));
-    }
-    let path = unique(path);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-    }
-    let file = File::create(&path).with_context(|| format!("creating {}", path.display()))?;
-    let mut w = BufWriter::new(file);
-    rfs::extract(src, e, &mut w)?;
-    let file = w.into_inner().map_err(|e| e.into_error())?;
-    if let Some(t) = e.modified.and_then(|t| u64::try_from(t).ok()) {
-        // Keeping the original date is a nicety; ignore failures.
-        let _ = file.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(t));
-    }
-    Ok(path)
-}
-
-/// Makes a file name safe to create on Windows, macOS and Linux.
-fn safe_name(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || r#"<>:"/\|?*"#.contains(c) {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let cleaned = cleaned.trim_end_matches(['.', ' ']);
-    if cleaned.is_empty() {
-        return "_".into();
-    }
-    let stem = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
-    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.len() == 4
-            && stem.as_bytes()[3].is_ascii_digit());
-    if reserved {
-        format!("_{cleaned}")
-    } else {
-        cleaned.to_owned()
-    }
-}
-
-/// Adds " (1)", " (2)", ... before the extension if `path` already exists.
-fn unique(path: PathBuf) -> PathBuf {
-    if !path.exists() {
-        return path;
-    }
-    let stem = path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
-    let ext = path
-        .extension()
-        .map(|e| format!(".{}", e.to_string_lossy()))
-        .unwrap_or_default();
-    (1..)
-        .map(|i| path.with_file_name(format!("{stem} ({i}){ext}")))
-        .find(|p| !p.exists())
-        .expect("unbounded")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn safe_names() {
-        assert_eq!(safe_name("photo.jpg"), "photo.jpg");
-        assert_eq!(safe_name("a:b?.txt"), "a_b_.txt");
-        assert_eq!(safe_name("con.txt"), "_con.txt");
-        assert_eq!(safe_name("COM1"), "_COM1");
-        assert_eq!(safe_name("..."), "_");
-        assert_eq!(safe_name("ünïcødé файл.txt"), "ünïcødé файл.txt");
-    }
 }

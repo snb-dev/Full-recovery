@@ -45,7 +45,10 @@ impl FileSource {
         let mut len = file.metadata()?.len();
         if len == 0 {
             // Block devices report a size of 0 in their metadata.
-            len = file.seek(SeekFrom::End(0))?;
+            len = file.seek(SeekFrom::End(0)).unwrap_or(0);
+        }
+        if len == 0 {
+            len = device_len(&file).unwrap_or(0);
         }
         let align = if cfg!(windows) && path.to_string_lossy().starts_with(r"\\.\") {
             4096
@@ -73,6 +76,50 @@ impl FileSource {
             self.file.seek_read(buf, offset)
         }
     }
+}
+
+/// Asks the operating system for the size of a raw device.
+#[cfg(windows)]
+fn device_len(file: &File) -> Option<u64> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Ioctl::{GET_LENGTH_INFORMATION, IOCTL_DISK_GET_LENGTH_INFO};
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+
+    let mut info = GET_LENGTH_INFORMATION { Length: 0 };
+    let mut returned = 0u32;
+    let ok = unsafe {
+        DeviceIoControl(
+            file.as_raw_handle(),
+            IOCTL_DISK_GET_LENGTH_INFO,
+            std::ptr::null(),
+            0,
+            (&mut info as *mut GET_LENGTH_INFORMATION).cast(),
+            std::mem::size_of::<GET_LENGTH_INFORMATION>() as u32,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(info.Length as u64)
+}
+
+#[cfg(target_os = "macos")]
+fn device_len(file: &File) -> Option<u64> {
+    use std::os::fd::AsRawFd;
+    const DKIOCGETBLOCKSIZE: libc::c_ulong = 0x4004_6418;
+    const DKIOCGETBLOCKCOUNT: libc::c_ulong = 0x4008_6419;
+
+    let (mut size, mut count) = (0u32, 0u64);
+    let fd = file.as_raw_fd();
+    let ok = unsafe {
+        libc::ioctl(fd, DKIOCGETBLOCKSIZE, &mut size) == 0
+            && libc::ioctl(fd, DKIOCGETBLOCKCOUNT, &mut count) == 0
+    };
+    ok.then_some(u64::from(size) * count)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn device_len(_file: &File) -> Option<u64> {
+    None
 }
 
 impl Source for FileSource {

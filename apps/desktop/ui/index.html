@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Full Recovery</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="logo.svg" alt="" width="26" height="26">
+      <span>Full Recovery</span>
+    </div>
+    <nav class="crumbs" id="crumbs"></nav>
+    <div class="spacer"></div>
+    <span class="badge-free">Free &amp; open source</span>
+  </header>
+
+  <main>
+    <!-- 1. Choose a drive -->
+    <section id="view-home" class="view">
+      <div class="narrow">
+        <h1>Where did you lose your files?</h1>
+        <p class="lead">Choose a drive, memory card or USB stick. Full Recovery only reads it &mdash; nothing is ever written to it.</p>
+        <div id="drives" class="drive-grid"></div>
+        <div class="row gap">
+          <button id="btn-open-image" class="btn">Open a disk image file&hellip;</button>
+          <button id="btn-refresh" class="btn ghost">Refresh list</button>
+        </div>
+        <div class="tip">
+          <strong>Tip:</strong> stop using the drive until your files are back. Saving anything new on it can overwrite the files you want to recover.
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Choose a scan -->
+    <section id="view-source" class="view hidden">
+      <div class="narrow">
+        <h1 id="source-title"></h1>
+        <p class="lead" id="source-sub"></p>
+        <div id="partitions" class="partitions"></div>
+        <div class="action-grid">
+          <button id="btn-quick" class="action">
+            <span class="action-icon quick"></span>
+            <span class="action-title">Quick scan</span>
+            <span class="action-text">Finds deleted files with their original names, folders and dates. Usually takes seconds.</span>
+          </button>
+          <button id="btn-deep" class="action">
+            <span class="action-icon deep"></span>
+            <span class="action-title">Deep scan</span>
+            <span class="action-text">Finds photos, videos and documents by their content &mdash; even after formatting. Takes longer.</span>
+          </button>
+        </div>
+        <label class="check"><input type="checkbox" id="chk-lost"> Also search for lost or deleted partitions (reads the whole drive)</label>
+        <p class="small">Drive making noises or very slow? <button id="btn-image" class="link">Copy it to a disk image first</button> and recover from the copy.</p>
+      </div>
+    </section>
+
+    <!-- 3. Results -->
+    <section id="view-results" class="view hidden">
+      <div id="scanbar" class="scanbar hidden">
+        <div class="scan-text"><strong id="scan-phase">Scanning</strong> <span id="scan-found"></span></div>
+        <div class="progress"><div id="scan-progress"></div></div>
+        <button id="btn-cancel" class="btn small">Stop</button>
+      </div>
+      <div class="results">
+        <aside class="sidebar">
+          <div class="side-title">File types</div>
+          <ul id="categories" class="side-list"></ul>
+          <div class="side-title">Folders</div>
+          <div id="folders" class="tree"></div>
+        </aside>
+        <div class="center">
+          <div class="toolbar">
+            <input id="search" type="search" placeholder="Search by name&hellip;" autocomplete="off">
+            <label class="check inline"><input type="checkbox" id="chk-deleted" checked> Deleted files only</label>
+            <select id="sel-chance" title="Recovery chance">
+              <option value="low">Any chance</option>
+              <option value="medium">Good or better</option>
+              <option value="high">Excellent only</option>
+            </select>
+            <div class="spacer"></div>
+            <div class="segmented" role="group" aria-label="View">
+              <button id="btn-list" class="on" title="List">List</button>
+              <button id="btn-grid" title="Thumbnails">Thumbnails</button>
+            </div>
+          </div>
+          <div id="list-head" class="list-head">
+            <label class="cell check-cell"><input type="checkbox" id="chk-all" title="Select all shown"></label>
+            <button class="cell name" data-sort="name">Name</button>
+            <button class="cell folder" data-sort="folder">Folder</button>
+            <button class="cell size" data-sort="size">Size</button>
+            <button class="cell date" data-sort="modified">Modified</button>
+            <button class="cell chance" data-sort="confidence">Chance</button>
+          </div>
+          <div id="list" class="list" tabindex="0">
+            <div id="list-spacer"></div>
+          </div>
+          <div id="empty" class="empty hidden"></div>
+        </div>
+        <aside id="preview" class="preview">
+          <div class="preview-empty">Select a file to preview it.</div>
+        </aside>
+      </div>
+      <footer class="actionbar">
+        <span id="selection-info" class="muted"></span>
+        <div class="spacer"></div>
+        <button id="btn-new" class="btn ghost">Choose another drive</button>
+        <button id="btn-deep-again" class="btn">Run deep scan</button>
+        <button id="btn-recover" class="btn primary">Recover</button>
+      </footer>
+    </section>
+  </main>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h2 id="modal-title"></h2>
+      <div id="modal-body"></div>
+      <div class="progress hidden" id="modal-progress-wrap"><div id="modal-progress"></div></div>
+      <div class="modal-actions" id="modal-actions"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
