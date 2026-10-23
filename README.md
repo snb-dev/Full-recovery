@@ -88,12 +88,18 @@ are lost but still there:
 - **Hidden folders:** media that gallery apps don't show (for example
   WhatsApp statuses).
 
+**USB sticks and memory cards in a USB card reader** plugged into the phone
+(with a USB-C or OTG adapter) are read directly, **without root**: the app
+asks Android for access to the device and then works like the desktop app,
+with quick scan (deleted files with their names and folders) and deep scan.
+
 Recovered files are saved in `Download/Full Recovery`. The app asks once for
 access to all files; nothing is uploaded or changed.
 
-**Deleted files on a memory card** can't be found this way: Android only
-gives apps the card's files, not the card itself. Put the card in a card
-reader and use Full Recovery on a computer instead.
+**A memory card in the phone's own card slot** can only be read file by
+file (Android doesn't let apps read the card itself), so its deleted files
+can't be found there. Put the card in a USB card reader and plug that into
+the phone, or use Full Recovery on a computer.
 
 ## Install
 
@@ -214,8 +220,8 @@ the truth instead of selling false hope:
    folder tree, recovery chance per file, installers
 4. **Android app** ✅: finds photos and videos in the trash, thumbnails,
    thumbnail databases, caches and hidden folders; phone-sized interface
-5. **More for Android:** read SD cards and USB drives directly through a USB
-   card reader (no root needed) and on rooted phones
+5. **USB drives on Android** ✅: reads USB sticks and cards in USB card
+   readers directly, without root, for full undelete and deep scan
 6. **More file systems:** ext4 (Linux, Android), APFS and HFS+ (Mac),
    NTFS-compressed files
 7. **Modern extras:** repair broken photos and videos, duplicate detection,

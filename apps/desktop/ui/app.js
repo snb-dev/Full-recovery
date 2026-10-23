@@ -163,7 +163,13 @@ async function loadDrives() {
     console.error(e);
   }
   box.replaceChildren();
-  if (!drives.length) {
+  for (const usb of androidUsbDevices()) {
+    box.append(el("button", { class: "drive", onclick: () => openUsbDevice(usb) },
+      el("div", { class: "icon" }, svgIcon("usb")),
+      el("div", {}, el("div", { class: "name", text: usb.name }),
+        el("div", { class: "meta", text: "USB drive or card reader · reads deleted files directly" }))));
+  }
+  if (!drives.length && !box.children.length) {
     box.append(el("div", { class: "no-drives", text: "No drives found. You can still open a disk image file." }));
     return;
   }
@@ -214,19 +220,79 @@ async function openFolderSource(path, title) {
   const note = $("folder-note");
   const card = state.platform === "android" && path !== "/storage/emulated/0";
   note.classList.toggle("hidden", !card);
-  note.textContent = "Android only lets apps read the files on a memory card, not the card itself. "
-    + "To find deleted files on this card, put it in a card reader and use Full Recovery on a computer.";
+  note.textContent = "Android only lets apps read the files of a card in the phone's card slot, not the card itself. "
+    + "To find deleted files on this card, put it in a USB card reader, plug that into the phone and choose it in the list, "
+    + "or use Full Recovery on a computer.";
   show("source");
 }
 
-async function openSource(path, title) {
+// ---------- USB drives on Android ----------
+
+function androidUsbDevices() {
+  const android = window.FullRecoveryAndroid;
+  if (!android?.usbDevices) return [];
   try {
-    const info = await invoke("open_source", { path });
-    state.source = { ...info, title };
+    return JSON.parse(android.usbDevices());
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+}
+
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+// Asks Android for access to a USB drive, then opens it like any drive.
+async function openUsbDevice(usb) {
+  const android = window.FullRecoveryAndroid;
+  if (!usb.permission) {
+    let cancelled = false;
+    modal({
+      title: "Allow access to the USB drive",
+      body: "Android will ask whether Full Recovery may use this USB device. Tap “OK” to continue.",
+      actions: [["Cancel", () => { cancelled = true; closeModal(); }]],
+    });
+    android.requestUsbPermission(usb.id);
+    for (let i = 0; i < 120 && !cancelled; i++) {
+      await sleep(500);
+      const now = androidUsbDevices().find((d) => d.id === usb.id);
+      if (!now) break;
+      if (now.permission) {
+        usb.permission = true;
+        break;
+      }
+    }
+    closeModal();
+    if (!usb.permission) return;
+  }
+  const params = JSON.parse(android.openUsb(usb.id));
+  if (params.fd == null) {
+    error("The USB drive could not be opened. Unplug it, plug it in again and retry.");
+    return;
+  }
+  modal({ title: "Reading the USB drive…", body: "Card readers can take a few seconds to get ready." });
+  try {
+    const info = await invoke("open_usb_source", { usb: params });
+    closeModal();
+    showSource(info, usb.name);
+  } catch (e) {
+    error(e);
+  }
+}
+
+async function openSource(path, title) {
+  let info;
+  try {
+    info = await invoke("open_source", { path });
   } catch (e) {
     error(e);
     return;
   }
+  showSource(info, title);
+}
+
+function showSource(info, title) {
+  const path = info.path;
+  state.source = { ...info, title };
   setSourceMode(false);
   $("folder-note").classList.add("hidden");
   $("source-title").textContent = title;
@@ -772,6 +838,17 @@ function checkAndroidAccess() {
 
 $("btn-allow").addEventListener("click", () => window.FullRecoveryAndroid?.requestAllFilesAccess());
 document.addEventListener("visibilitychange", () => { if (!document.hidden) checkAndroidAccess(); });
+
+// Notice USB drives being plugged in or out while the drive list is shown.
+let usbSeen = "";
+setInterval(() => {
+  if (!window.FullRecoveryAndroid?.usbDevices || $("view-home").classList.contains("hidden")) return;
+  const now = JSON.stringify(androidUsbDevices().map((d) => d.id));
+  if (now !== usbSeen) {
+    usbSeen = now;
+    loadDrives();
+  }
+}, 2000);
 
 async function start() {
   try {

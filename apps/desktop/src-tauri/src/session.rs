@@ -93,7 +93,7 @@ pub struct SourceInfo {
 
 #[derive(Default)]
 pub struct Session {
-    source: Option<(PathBuf, Arc<FileSource>)>,
+    source: Option<(PathBuf, SharedSource)>,
     /// Set instead of `source` when a folder is scanned.
     folder: Option<PathBuf>,
     items: Vec<Item>,
@@ -126,15 +126,57 @@ pub fn describe(e: &io::Error) -> String {
 /// Opens a drive or disk image and reads its partition table. Forgets any
 /// previous results.
 pub fn open(shared: &Shared, path: &str) -> Result<SourceInfo, String> {
+    if lock(shared).busy {
+        return Err("Please wait for the current task to finish.".into());
+    }
+    let src = FileSource::open(Path::new(path)).map_err(|e| describe(&e))?;
+    open_source(shared, path, Arc::new(src))
+}
+
+/// Opens a USB stick or card reader that Android handed to the app: `fd` is
+/// the open USB device with `interface` claimed (see MainActivity.kt).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn open_usb(shared: &Shared, usb: UsbDevice) -> Result<SourceInfo, String> {
+    use fullrecovery_core::usb::{usbfs::Usbfs, MassStorage};
+
+    if lock(shared).busy {
+        return Err("Please wait for the current task to finish.".into());
+    }
+    // SAFETY: the app's Android side keeps the connection, and so `fd`, open.
+    let transport =
+        unsafe { Usbfs::from_raw_fd(usb.fd, usb.interface, usb.endpoint_in, usb.endpoint_out) }
+            .map_err(|e| describe(&e))?;
+    let device = MassStorage::open(transport).map_err(|e| {
+        format!("Could not read the USB drive: {e}. Unplug it, plug it in again and retry.")
+    })?;
+    let path = format!("usb:{}", usb.name);
+    open_source(shared, &path, Arc::new(device))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+pub fn open_usb(_shared: &Shared, _usb: UsbDevice) -> Result<SourceInfo, String> {
+    Err("Reading USB devices directly is only needed and supported on Android.".into())
+}
+
+/// A USB mass storage device opened by the Android side of the app.
+#[derive(Debug, serde::Deserialize)]
+pub struct UsbDevice {
+    pub name: String,
+    pub fd: i32,
+    pub interface: u16,
+    pub endpoint_in: u8,
+    pub endpoint_out: u8,
+}
+
+fn open_source(shared: &Shared, path: &str, src: SharedSource) -> Result<SourceInfo, String> {
     let mut s = lock(shared);
     if s.busy {
         return Err("Please wait for the current task to finish.".into());
     }
-    let src = FileSource::open(Path::new(path)).map_err(|e| describe(&e))?;
     if src.is_empty() {
         return Err("This drive is empty or its size can't be read.".into());
     }
-    let partitions = partition::read_table(&src).map_err(|e| describe(&e))?;
+    let partitions = partition::read_table(&*src).map_err(|e| describe(&e))?;
     let info = SourceInfo {
         path: path.into(),
         size: src.len(),
@@ -142,7 +184,7 @@ pub fn open(shared: &Shared, path: &str) -> Result<SourceInfo, String> {
         folder: false,
     };
     *s = Session {
-        source: Some((PathBuf::from(path), Arc::new(src))),
+        source: Some((PathBuf::from(path), src)),
         ..Session::default()
     };
     Ok(info)
@@ -176,7 +218,9 @@ pub fn open_folder(shared: &Shared, path: &str) -> Result<SourceInfo, String> {
 
 /// Marks the session busy and returns what a background job needs: the
 /// open drive (`None` for a folder) and the cancel flag.
-fn begin_any(shared: &Shared) -> Result<(Option<Arc<FileSource>>, Arc<AtomicBool>), String> {
+type SharedSource = Arc<dyn Source>;
+
+fn begin_any(shared: &Shared) -> Result<(Option<SharedSource>, Arc<AtomicBool>), String> {
     let mut s = lock(shared);
     if s.busy {
         return Err("Please wait for the current task to finish.".into());
@@ -191,7 +235,7 @@ fn begin_any(shared: &Shared) -> Result<(Option<Arc<FileSource>>, Arc<AtomicBool
 }
 
 /// Like [`begin_any`], for jobs that need a drive.
-fn begin(shared: &Shared) -> Result<(Arc<FileSource>, Arc<AtomicBool>), String> {
+fn begin(shared: &Shared) -> Result<(SharedSource, Arc<AtomicBool>), String> {
     {
         let s = lock(shared);
         if s.source.is_none() && s.folder.is_some() {

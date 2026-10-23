@@ -12,6 +12,7 @@
 //! * [`scan`]: signature-based deep scan ("file carving") that finds files by
 //!   their content, even after formatting or when the file system is gone;
 //! * [`recover`]: copying found files out to a safe location;
+//! * [`usb`]: reads USB sticks and card readers directly (Android without root);
 //! * [`image`]: making a byte-by-byte copy of a failing drive, skipping
 //!   unreadable sectors, so recovery can work on the copy instead.
 
@@ -25,6 +26,7 @@ pub mod reader;
 pub mod recover;
 pub mod scan;
 pub mod source;
+pub mod usb;
 
 #[cfg(test)]
 mod fixtures;

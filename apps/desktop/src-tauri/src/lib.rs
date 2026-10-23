@@ -29,6 +29,16 @@ fn open_source(state: State<'_, Shared>, path: String) -> Result<SourceInfo, Str
     session::open(&state, &path)
 }
 
+/// Opens a USB stick or card reader that the Android side of the app
+/// opened (window.FullRecoveryAndroid.openUsb).
+#[tauri::command]
+async fn open_usb_source(
+    state: State<'_, Shared>,
+    usb: session::UsbDevice,
+) -> Result<SourceInfo, String> {
+    session::open_usb(&state, usb)
+}
+
 #[tauri::command]
 fn open_folder_source(state: State<'_, Shared>, path: String) -> Result<SourceInfo, String> {
     session::open_folder(&state, &path)
@@ -135,6 +145,7 @@ pub fn run() {
             list_drives,
             open_source,
             open_folder_source,
+            open_usb_source,
             platform,
             default_output_dir,
             start_quick_scan,

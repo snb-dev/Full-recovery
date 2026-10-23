@@ -21,7 +21,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Ioctl",
 ] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]

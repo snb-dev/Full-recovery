@@ -186,6 +186,30 @@ try:
     for name in ["IMG_20240312_1022.jpg", "IMG_20240313_1023.jpg"]:
         trashed = os.path.join(PHONE, "DCIM/Camera", f".trashed-1735689600-{name}")
         assert filecmp.cmp(trashed, os.path.join(phone_out, "DCIM/Camera", name), shallow=False), name
+    js("closeModal()")
+
+    # 11. A USB card reader plugged into the phone. Android's side is
+    # simulated: there is no USB hardware here, so opening ends in a clear
+    # error, which is checked too.
+    js("""window.__usb = { permission: false, opened: null };
+          Object.assign(window.FullRecoveryAndroid, {
+            usbDevices: () => JSON.stringify([{ id: '/dev/bus/usb/001/002', name: 'Generic Card Reader',
+                                                permission: window.__usb.permission }]),
+            requestUsbPermission: () => setTimeout(() => { window.__usb.permission = true; }, 1500),
+            openUsb: (id) => { window.__usb.opened = id;
+              return JSON.stringify({ name: 'Generic Card Reader', fd: 0, interface: 0, endpoint_in: 129, endpoint_out: 2 }); },
+          });
+          show('home'); loadDrives();""")
+    wait.until(lambda d: "Generic Card Reader" in d.find_element(By.ID, "drives").text)
+    shot("15-phone-usb-drive")
+    js("[...document.querySelectorAll('.drive')].find(b => b.textContent.includes('Card Reader')).click()")
+    wait.until(lambda d: d.find_element(By.ID, "modal-title").text == "Allow access to the USB drive")
+    shot("16-phone-usb-permission")
+    wait.until(lambda d: js("return window.__usb.opened") == "/dev/bus/usb/001/002")
+    wait.until(lambda d: d.find_element(By.ID, "modal-title").text == "Something went wrong")
+    message = d.find_element(By.ID, "modal-body").text
+    print("USB without hardware:", message)
+    assert "Could not read the USB drive" in message, message
     print("PASS: all checks passed; screenshots in", SHOTS)
 finally:
     d.quit()
