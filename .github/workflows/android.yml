@@ -55,9 +55,15 @@ jobs:
           printf 'keyAlias=fullrecovery\npassword=%s\nstoreFile=%s\n' "$password" "$store" > keystore.properties
       - name: Build
         working-directory: apps/desktop
-        env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
-        run: npx tauri android build --apk --target aarch64 --target armv7
+        run: |
+          # The runner's NDK; its variables are only visible to the shell.
+          NDK_HOME="${ANDROID_NDK_LATEST_HOME:-}"
+          if [ -z "$NDK_HOME" ]; then
+            NDK_HOME=$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)
+          fi
+          echo "Using NDK $NDK_HOME"
+          export NDK_HOME
+          npx tauri android build --apk --target aarch64 --target armv7
       - name: Collect
         run: |
           apk=$(find apps/desktop/src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | head -1)
